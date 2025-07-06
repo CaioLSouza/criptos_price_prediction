@@ -30,6 +30,7 @@ from xgboost import XGBRegressor
 from scipy.stats import pearsonr, shapiro
 from statsmodels.stats.diagnostic import acorr_ljungbox
 from statsmodels.tsa.ar_model import AutoReg
+from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.tsa.stattools import adfuller
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 
@@ -586,6 +587,115 @@ def evaluate_performance(predictions, actual):
     print(f'MAE: {mae:.4f}')
     
     return [mse, mae]
+
+
+# ---------------------------------------------------------------
+# ARIMA MODELING UTILITIES
+# ---------------------------------------------------------------
+
+def one_step_ahead_forecasting_ARIMA(y, starting_point_percent, order):
+    """Perform one-step-ahead forecasting using an ARIMA model."""
+
+    predictions = np.array([])
+    starting_point = int(len(y) * starting_point_percent)
+
+    y_train = y[:starting_point]
+    y_test = y[starting_point:]
+
+    model = ARIMA(y_train, order=order)
+    model_fit = model.fit()
+
+    for i in range(len(y_test)):
+        pred = model_fit.predict(start=len(y_train), end=len(y_train))
+        predictions = np.append(predictions, pred)
+
+        y_train = np.append(y_train, y_test.iloc[i])
+
+        model = ARIMA(y_train, order=order)
+        model_fit = model.fit()
+
+    return predictions
+
+
+def grid_search_arima(y, p_values, d_values, q_values):
+    """Return the ARIMA (p,d,q) combination with the lowest AIC."""
+
+    best_aic = np.inf
+    best_order = None
+
+    for p in p_values:
+        for d in d_values:
+            for q in q_values:
+                try:
+                    model = ARIMA(y, order=(p, d, q))
+                    model_fit = model.fit()
+                    if model_fit.aic < best_aic:
+                        best_aic = model_fit.aic
+                        best_order = (p, d, q)
+                except Exception:
+                    continue
+
+    return best_order
+
+
+def fit_arima_model(df, starting_point_percent, p_values, d_values, q_values):
+    """Train ARIMA models searching for the best order and return performance and residuals."""
+
+    performance_dict = {}
+    residuals_dict = {}
+
+    for column in df.columns:
+        print(f"\nTraining ARIMA for variable: {column}")
+        y = df[column]
+
+        best_order = grid_search_arima(
+            y[: int(len(y) * starting_point_percent)],
+            p_values,
+            d_values,
+            q_values,
+        )
+
+        if best_order is None:
+            print("No valid ARIMA configuration found for", column)
+            continue
+
+        print(f"Best order for {column}: {best_order}")
+
+        predictions = one_step_ahead_forecasting_ARIMA(
+            y=y, starting_point_percent=starting_point_percent, order=best_order
+        )
+
+        actual = y.iloc[int(len(y) * starting_point_percent) :]
+        mse, mae = evaluate_performance(predictions=predictions, actual=actual)
+        performance_dict[(column, best_order)] = [mse, mae]
+
+        residuals = predictions - actual.values
+        residuals_dict[(column, best_order)] = residuals
+
+        predictions_naive = y.shift(1).iloc[int(len(y) * starting_point_percent) :]
+        predictions_naive = predictions_naive.dropna()
+        mse_naive, mae_naive = evaluate_performance(
+            predictions=predictions_naive, actual=actual
+        )
+        performance_dict[("Naive_" + column, best_order)] = [mse_naive, mae_naive]
+
+    performance_df = pd.DataFrame.from_dict(
+        performance_dict, orient="index", columns=["MSE", "MAE"]
+    )
+    performance_df.index = pd.MultiIndex.from_tuples(
+        performance_df.index, names=["Variable", "Order"]
+    )
+
+    residuals_df = pd.DataFrame(residuals_dict)
+    residuals_df.columns = pd.MultiIndex.from_tuples(
+        residuals_df.columns, names=["Variable", "Order"]
+    )
+    residuals_df.index = df[column].iloc[int(len(df[column]) * starting_point_percent) :].index[
+        : len(residuals_df)
+    ]
+
+    return performance_df, residuals_df
+
 
 
 
