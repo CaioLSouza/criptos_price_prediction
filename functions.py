@@ -618,10 +618,26 @@ def one_step_ahead_forecasting_ARIMA(y, starting_point_percent, order):
 
 
 def grid_search_arima(y, p_values, d_values, q_values):
-    """Return the ARIMA (p,d,q) combination with the lowest AIC."""
+    """Return the ARIMA (p,d,q) combination with the lowest MSE.
 
-    best_aic = np.inf
+    Parameters
+    ----------
+    y : array-like
+        Time series used to fit the ARIMA models.
+    p_values, d_values, q_values : iterable
+        Parameter ranges for the ARIMA model.
+
+    Returns
+    -------
+    tuple
+        A tuple ``(best_order, mse_dict)`` where ``best_order`` is the
+        parameter combination with the smallest mean squared error and
+        ``mse_dict`` maps each parameter tuple to its MSE.
+    """
+
+    best_mse = np.inf
     best_order = None
+    mse_dict = {}
 
     for p in p_values:
         for d in d_values:
@@ -629,13 +645,16 @@ def grid_search_arima(y, p_values, d_values, q_values):
                 try:
                     model = ARIMA(y, order=(p, d, q))
                     model_fit = model.fit()
-                    if model_fit.aic < best_aic:
-                        best_aic = model_fit.aic
+                    preds = model_fit.predict(start=0, end=len(y) - 1)
+                    mse = mean_squared_error(y, preds)
+                    mse_dict[(p, d, q)] = mse
+                    if mse < best_mse:
+                        best_mse = mse
                         best_order = (p, d, q)
                 except Exception:
                     continue
 
-    return best_order
+    return best_order, mse_dict
 
 
 def fit_arima_model(df, starting_point_percent, p_values, d_values, q_values):
@@ -648,7 +667,7 @@ def fit_arima_model(df, starting_point_percent, p_values, d_values, q_values):
         print(f"\nTraining ARIMA for variable: {column}")
         y = df[column]
 
-        best_order = grid_search_arima(
+        best_order, _ = grid_search_arima(
             y[: int(len(y) * starting_point_percent)],
             p_values,
             d_values,
