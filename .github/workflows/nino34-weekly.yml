@@ -1,0 +1,48 @@
+name: Update weekly Nino 3.4 data
+
+# NOAA CPC is not reachable from the Claude Code sandbox (GitHub-only egress),
+# but GitHub-hosted runners have open internet. This workflow downloads the
+# weekly Nino region SST/anomaly file on a runner and commits the parsed CSV
+# back to the branch. It runs when the fetch script changes, on a weekly
+# schedule (CPC updates Mondays), and on manual dispatch.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - claude/nino-3-4-anomaly-data-falac0
+    paths:
+      - input_data/fetch_nino34_weekly.py
+      - .github/workflows/nino34-weekly.yml
+  schedule:
+    - cron: "0 12 * * 2"  # Tuesdays 12:00 UTC, after the Monday CPC update
+
+permissions:
+  contents: write
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Fetch and parse weekly Nino 3.4 data
+        run: python input_data/fetch_nino34_weekly.py
+
+      - name: Commit updated CSV
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add input_data/nino34_weekly.csv
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Update weekly Nino 3.4 anomaly data [skip ci]"
+            git push
+          fi
